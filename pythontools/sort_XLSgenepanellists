@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Convert neuropati.xlsx → aligned, sorted matrix
+and preserve the original cell colors (per gene, per column).
+"""
+
+import pandas as pd
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import PatternFill
+
+# --- 1. Input/output paths ---
+infile  = <infile>
+outfile = <outfile>
+
+# --- 2. Load workbook (to access colors) ---
+wb = load_workbook(infile, data_only=True)
+ws = wb.active
+
+# --- 3. Extract values ---
+data = [[cell.value for cell in row] for row in ws.iter_rows()]
+header_raw = [x for x in data[1] if x not in (None, "")]
+header = [f"{i+1} | {h}" for i, h in enumerate(header_raw)]
+
+# --- 4. Extract colors (fill color per cell, hex like "FF0000") ---
+def get_color(cell):
+    fill = cell.fill
+    if fill and fill.fgColor and fill.fgColor.type == "rgb":
+        return fill.fgColor.rgb
+    return None
+
+colors = [[get_color(cell) for cell in row] for row in ws.iter_rows()]
+
+# --- 5. Build gene lists per column (skip blanks) ---
+gene_lists, color_lists = [], []
+for j in range(len(header_raw)):
+    col_vals = [r[j] for r in data[2:] if j < len(r)]
+    col_cols = [c[j] for c in colors[2:] if j < len(c)]
+    clean_vals, clean_cols = [], []
+    for v, c in zip(col_vals, col_cols):
+        if v not in (None, "", 0):
+            clean_vals.append(str(v))
+            clean_cols.append(c)
+    if len(clean_vals) > 1:
+        gene_lists.append(sorted(clean_vals))
+        color_lists.append([c for _, c in sorted(zip(clean_vals, clean_cols))])
+
+# --- 6. Prepend header names ---
+for i in range(len(gene_lists)):
+    gene_lists[i].insert(0, header[i])
+    color_lists[i].insert(0, None)
+
+# --- 7. Pad to equal length ---
+longest = max(len(g) for g in gene_lists)
+for i in range(len(gene_lists)):
+    while len(gene_lists[i]) < longest:
+        gene_lists[i].append(0)
+        color_lists[i].append(None)
+
+# --- 8. Sort columns by numeric index ---
+gene_lists, color_lists = zip(*sorted(
+    zip(gene_lists, color_lists),
+    key=lambda x: int(x[0][0].split(" | ")[0])
+))
+
+# --- 9. Transpose ---
+transposed_genes  = list(map(list, zip(*gene_lists)))
+transposed_colors = list(map(list, zip(*color_lists)))
+
+# --- 10. Separate header and body ---
+header = [h.split(" | ")[1] for h in transposed_genes[0]]
+data_genes  = transposed_genes[1:]
+data_colors = transposed_colors[1:]
+
+# --- 11. Build per-column gene lists ---
+colGenes, colColors = [], []
+for j in range(len(header)):
+    genes_j, colors_j = [], []
+    for g, c in zip([row[j] for row in data_genes], [row[j] for row in data_colors]):
+        if g not in ("", 0, None):
+            genes_j.append(g)
+            colors_j.append(c)
+    colGenes.append(genes_j)
+    colColors.append(colors_j)
+
+# --- 12. Global gene order (first occurrence left→right, top→bottom) ---
+allGenes = []
+for col in colGenes:
+    for g in col:
+        if g not in allGenes:
+            allGenes.append(g)
+
+# --- 13. Build aligned matrix + colors ---
+aligned, aligned_colors = [], []
+for g in allGenes:
+    row, row_colors = [], []
+    for col, colC in zip(colGenes, colColors):
+        if g in col:
+            idx = col.index(g)
+            row.append(g)
+            row_colors.append(colC[idx])
+        else:
+            row.append("")
+            row_colors.append(None)
+    aligned.append(row)
+    aligned_colors.append(row_colors)
+
+# --- 14. Sort rows by first non-empty gene ---
+aligned, aligned_colors = zip(*sorted(
+    zip(aligned, aligned_colors),
+    key=lambda r: next((x for x in r[0] if x != ""), "")
+))
+
+# --- 15. Write new Excel file with preserved colors ---
+outwb = Workbook()
+outws = outwb.active
+outws.append(header)
+
+for row_vals, row_cols in zip(aligned, aligned_colors):
+    outws.append(row_vals)
+    for j, color in enumerate(row_cols):
+        if color:
+            outws.cell(outws.max_row, j + 1).fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+
+outwb.save(outfile)
+print(f" Saved: {outfile}")
