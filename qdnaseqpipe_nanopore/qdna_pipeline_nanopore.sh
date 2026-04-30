@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=qdnapipe-nanopore
-#SBATCH --account=
+#SBATCH --account=nanopore_kga
 #SBATCH -c 6
 #SBATCH --mem 32g
 #SBATCH --time 4:00:00
@@ -9,12 +9,33 @@
 
 set -euo pipefail
 
+work_dir=${SLURM_SUBMIT_DIR:-$PWD}
+script_dir=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
+cd "$work_dir"
+
+resolve_path() {
+  local path=$1
+  local base_dir=$2
+  if [[ "$path" = /* ]]; then
+    printf '%s\n' "$path"
+  else
+    printf '%s\n' "$base_dir/$path"
+  fi
+}
+
+echo "PWD: $(pwd)"
+echo "SLURM_SUBMIT_DIR: ${SLURM_SUBMIT_DIR:-}"
+echo "SCRIPT_DIR: $script_dir"
+echo "WORK_DIR: $work_dir"
+
+
+
 usage() {
   cat <<EOF
 Usage: qdna_pipeline.sh <input.cram> [sample_id]
 
 Pipeline:
-  1) convert CRAM to BAM with samtools view -T
+  1) accept BAM directly, or convert CRAM to BAM with samtools view -T
   2) sort BAM
   3) index BAM
   4) run QDNAseq CNV calling, plot, and VCF export
@@ -45,17 +66,19 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
-input_cram=$1
-sample_id=${2:-$(basename "$input_cram" .cram)}
+input_file=$(resolve_path "$1" "$work_dir")
+input_basename=$(basename "$input_file")
+sample_id=${2:-${input_basename%.cram}}
+sample_id=${sample_id%.bam}
 
-reference_fasta=${REFERENCE_FASTA:-[PathToReference]}
+reference_fasta=${REFERENCE_FASTA:-/faststorage/project/MomaDiagnosticSamples-KGA/BACKUP/reference/igv_genome_hg38/resources/GCA_000001405.15_GRCh38_no_alt_analysis_set.GRC_exclusions_masked.fasta}
 threads=${THREADS:-20}
 binsize=${BINSIZE:-100}
-qdna_rscript=${QDNA_RSCRIPT:-$(dirname "$0")/qdna_stable5_cli.R}
-plot_script=${PLOT_CHR_SCRIPT:-$(dirname "$0")/plot_chr_boxwhisker_utest.py}
-report_script=${REPORT_SCRIPT:-$(dirname "$0")/generate_sample_report.py}
-control_sample=${CONTROL_SAMPLE:-[Sample]_hg38_ASv2}
-control_bed=${CONTROL_BED:-${control_sample}_log2.bed}
+qdna_rscript=$(resolve_path "${QDNA_RSCRIPT:-$script_dir/qdna_stable5_cli.R}" "$work_dir")
+plot_script=$(resolve_path "${PLOT_CHR_SCRIPT:-$script_dir/plot_chr_boxwhisker_utest.py}" "$work_dir")
+report_script=$(resolve_path "${REPORT_SCRIPT:-$script_dir/generate_sample_report.py}" "$work_dir")
+control_sample=${CONTROL_SAMPLE:-02268-26_hg38_ASv2}
+control_bed=$(resolve_path "${CONTROL_BED:-${control_sample}_log2.bed}" "$work_dir")
 
 sorted_bam="${sample_id}.sorted.bam"
 sorted_bai="${sorted_bam}.bai"
@@ -63,8 +86,8 @@ continue_aborted=${CONTINUE_ABORTED:-1}
 force_bam=${FORCE_BAM:-0}
 force_index=${FORCE_INDEX:-0}
 
-if [[ ! -f "$input_cram" ]]; then
-  echo "Input CRAM not found: $input_cram" >&2
+if [[ ! -f "$input_file" ]]; then
+  echo "Input file not found: $input_file" >&2
   exit 1
 fi
 
@@ -88,12 +111,26 @@ if [[ ! -f "$report_script" ]]; then
   exit 1
 fi
 
+input_ext=${input_basename##*.}
+
 if [[ -f "$sorted_bam" && "$force_bam" != "1" ]]; then
   echo "[1/4] Reusing existing sorted BAM: $sorted_bam"
 else
-  echo "[1/4] Converting CRAM to sorted BAM..."
-  samtools view -T "$reference_fasta" -b "$input_cram" | \
-    samtools sort -@ "$threads" -o "$sorted_bam" -
+  case "$input_ext" in
+    cram)
+      echo "[1/4] Converting CRAM to sorted BAM..."
+      samtools view -T "$reference_fasta" -b "$input_file" | \
+        samtools sort -@ "$threads" -o "$sorted_bam" -
+      ;;
+    bam)
+      echo "[1/4] Sorting BAM..."
+      samtools sort -@ "$threads" -o "$sorted_bam" "$input_file"
+      ;;
+    *)
+      echo "Unsupported input extension for $input_file (expected .bam or .cram)" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 if [[ -f "$sorted_bai" && "$force_index" != "1" ]]; then
