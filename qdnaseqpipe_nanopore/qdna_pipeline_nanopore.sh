@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=qdnapipe-nanopore
-#SBATCH --account=nanopore_kga
+#SBATCH --account=
 #SBATCH -c 6
 #SBATCH --mem 32g
 #SBATCH --time 4:00:00
@@ -48,13 +48,13 @@ fi
 input_cram=$1
 sample_id=${2:-$(basename "$input_cram" .cram)}
 
-reference_fasta=${REFERENCE_FASTA:-/faststorage/project/MomaDiagnosticSamples-KGA/BACKUP/reference/igv_genome_hg38/resources/GCA_000001405.15_GRCh38_no_alt_analysis_set.GRC_exclusions_masked.fasta}
+reference_fasta=${REFERENCE_FASTA:-[PathToReference]}
 threads=${THREADS:-20}
 binsize=${BINSIZE:-100}
 qdna_rscript=${QDNA_RSCRIPT:-$(dirname "$0")/qdna_stable5_cli.R}
 plot_script=${PLOT_CHR_SCRIPT:-$(dirname "$0")/plot_chr_boxwhisker_utest.py}
 report_script=${REPORT_SCRIPT:-$(dirname "$0")/generate_sample_report.py}
-control_sample=${CONTROL_SAMPLE:-02268-26_hg38_ASv2}
+control_sample=${CONTROL_SAMPLE:-[Sample]_hg38_ASv2}
 control_bed=${CONTROL_BED:-${control_sample}_log2.bed}
 
 sorted_bam="${sample_id}.sorted.bam"
